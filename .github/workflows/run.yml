@@ -1,0 +1,36 @@
+name: BCP Pipeline
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # lunes
+    - cron: '0 9 * * 3'   # miércoles
+  workflow_dispatch:      # permite correrlo manual
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run pipeline
+        run: |
+          python pipeline.py
+
+      - name: Commit results
+        run: |
+          git config --global user.name "bot"
+          git config --global user.email "bot@github.com"
+          git add bcp_limpio.csv
+          git commit -m "update data" || echo "no changes"
+          git push
