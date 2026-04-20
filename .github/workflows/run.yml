@@ -1,6 +1,3 @@
-permissions:
-  contents: write
-
 name: BCP Pipeline
 
 permissions:
