@@ -5,7 +5,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 # =========================
-# FUNCION: DETECTAR ÚLTIMO EXCEL (ROBUSTA)
+# FUNCION: DETECTAR ÚLTIMO EXCEL
 # =========================
 
 def obtener_ultimo_excel():
@@ -18,6 +18,8 @@ def obtener_ultimo_excel():
     print("Buscando último archivo en BCP...")
     response = requests.get(url, headers=headers)
     
+    print("Status página:", response.status_code)
+
     if response.status_code != 200:
         raise Exception("No se pudo acceder a la página del BCP")
 
@@ -34,15 +36,20 @@ def obtener_ultimo_excel():
                 href = "https://www.bcp.gov.py" + href
             excel_links.append(href)
 
+    print(f"Cantidad de excels encontrados: {len(excel_links)}")
+
+    for l in excel_links[:5]:
+        print("Ejemplo link:", l)
+
     if not excel_links:
         raise Exception("No se encontraron archivos Excel")
 
-    # 🔥 tomar el más largo (suele ser el más reciente con token)
+    # tomar el más reciente (heurística)
     excel_links = sorted(excel_links, key=len, reverse=True)
 
     ultimo = excel_links[0]
 
-    print("Excel detectado:", ultimo)
+    print("Excel elegido:", ultimo)
 
     return ultimo
 
@@ -69,8 +76,13 @@ headers = {
 print("Descargando archivo...")
 response = session.get(FILE_URL, headers=headers)
 
+print("Status descarga:", response.status_code)
+
 if response.status_code != 200:
     raise Exception("Error al descargar archivo")
+
+if len(response.content) < 10000:
+    raise Exception("Archivo descargado sospechosamente pequeño")
 
 excel_file = BytesIO(response.content)
 
@@ -78,8 +90,14 @@ excel_file = BytesIO(response.content)
 # LEER EXCEL
 # =========================
 
-xls = pd.ExcelFile(excel_file)
+try:
+    xls = pd.ExcelFile(excel_file)
+except Exception as e:
+    raise Exception(f"Error leyendo Excel: {e}")
+
 omp_sheets = [s for s in xls.sheet_names if s.startswith("OMP")]
+
+print("Hojas encontradas:", omp_sheets)
 
 data_final = []
 
@@ -99,6 +117,7 @@ for sheet_name in omp_sheets:
             break
 
     if header_row is None:
+        print(f"⚠️ No se encontró 'Año Mes' en {sheet_name}")
         continue
 
     metric_row = df.iloc[header_row - 1].ffill()
@@ -139,7 +158,7 @@ for sheet_name in omp_sheets:
 # =========================
 
 if not data_final:
-    raise Exception("No se generaron datos")
+    raise Exception("No se generaron datos (todas las hojas fallaron)")
 
 df_final = pd.concat(data_final, ignore_index=True)
 
