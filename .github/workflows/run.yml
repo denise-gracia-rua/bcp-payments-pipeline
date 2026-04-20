@@ -3,11 +3,14 @@ permissions:
 
 name: BCP Pipeline
 
+permissions:
+  contents: write
+
 on:
   schedule:
-    - cron: '0 9 * * 1'   # lunes
-    - cron: '0 9 * * 3'   # miércoles
-  workflow_dispatch:      # permite correrlo manual
+    - cron: '0 9 * * 1'
+    - cron: '0 9 * * 3'
+  workflow_dispatch:
 
 jobs:
   run-pipeline:
@@ -15,20 +18,18 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run pipeline
-        run: |
-          python pipeline.py
+        run: python pipeline.py
 
       - name: Commit results
         run: |
