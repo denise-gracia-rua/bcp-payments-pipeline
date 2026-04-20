@@ -2,85 +2,69 @@ import requests
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
-from bs4 import BeautifulSoup
-
-# =========================
-# FUNCION: DETECTAR ÚLTIMO EXCEL (ANTI 403)
-# =========================
-
-def obtener_ultimo_excel():
-    url = "https://www.bcp.gov.py/web/institucional/anexo-estadistico-de-pagos"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "es-ES,es;q=0.9",
-        "Connection": "keep-alive",
-        "Referer": "https://www.google.com/"
-    }
-
-    print("Buscando último archivo en BCP...")
-    
-    session = requests.Session()
-    response = session.get(url, headers=headers)
-
-    print("Status página:", response.status_code)
-
-    if response.status_code != 200:
-        raise Exception(f"No se pudo acceder a la página del BCP - Status {response.status_code}")
-
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    links = soup.find_all("a", href=True)
-
-    excel_links = []
-
-    for link in links:
-        href = link["href"]
-        if ".xlsx" in href:
-            if not href.startswith("http"):
-                href = "https://www.bcp.gov.py" + href
-            excel_links.append(href)
-
-    print(f"Excels encontrados: {len(excel_links)}")
-
-    if not excel_links:
-        raise Exception("No se encontraron archivos Excel")
-
-    # tomar el más reciente (heurística)
-    excel_links = sorted(excel_links, key=len, reverse=True)
-
-    ultimo = excel_links[0]
-
-    print("Excel elegido:", ultimo)
-
-    return ultimo
-
 
 # =========================
 # CONFIG
 # =========================
 
+MESES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+]
+
+BASE_URL = "https://www.bcp.gov.py/documents/20117/213063/Bolet%C3%ADn+Estad%C3%ADstico+de+Sistemas+de+Pago_{mes}_{anio}.xlsx"
+
+# =========================
+# FUNCION: DETECTAR ÚLTIMO ARCHIVO
+# =========================
+
+def obtener_ultimo_excel():
+    session = requests.Session()
+
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    hoy = datetime.today()
+    anio = hoy.year
+
+    print("Buscando último archivo válido...")
+
+    # probar meses hacia atrás
+    for year in [anio, anio - 1]:
+        for mes in reversed(MESES):
+
+            url = BASE_URL.format(mes=mes, anio=year)
+
+            try:
+                response = session.get(url, headers=headers)
+
+                if response.status_code == 200 and len(response.content) > 10000:
+                    print(f"Archivo encontrado: {mes} {year}")
+                    print("URL:", url)
+                    return url
+
+            except:
+                continue
+
+    raise Exception("No se encontró ningún archivo válido")
+
+
+# =========================
+# CONFIG DINAMICA
+# =========================
+
 FILE_URL = obtener_ultimo_excel()
 
-hoy = datetime.today().strftime("%Y%m%d")
-OUTPUT_FILE = f"bcp_datos_{hoy}.csv"
+hoy_str = datetime.today().strftime("%Y%m%d")
+OUTPUT_FILE = f"bcp_datos_{hoy_str}.csv"
 
 # =========================
 # DESCARGA
 # =========================
 
-session = requests.Session()
-
-headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Referer": "https://www.bcp.gov.py/"
-}
-
 print("Descargando archivo...")
-response = session.get(FILE_URL, headers=headers)
-
-print("Status descarga:", response.status_code)
+response = requests.get(FILE_URL)
 
 if response.status_code != 200:
     raise Exception("Error al descargar archivo")
@@ -114,7 +98,6 @@ for sheet_name in omp_sheets:
             break
 
     if header_row is None:
-        print(f"⚠️ No se encontró 'Año Mes' en {sheet_name}")
         continue
 
     metric_row = df.iloc[header_row - 1].ffill()
