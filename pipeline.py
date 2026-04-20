@@ -1,13 +1,17 @@
 import requests
 import pandas as pd
 from io import BytesIO
+from datetime import datetime
 
 # =========================
 # CONFIG
 # =========================
 
 FILE_URL = "https://www.bcp.gov.py/documents/20117/213063/Bolet%C3%ADn+Estad%C3%ADstico+de+Sistemas+de+Pago_Marzo_2026.xlsx"
-OUTPUT_FILE = "bcp_limpio.csv"
+
+# nombre dinámico con fecha
+hoy = datetime.today().strftime("%Y%m%d")
+OUTPUT_FILE = f"bcp_datos_{hoy}.csv"
 
 # =========================
 # DESCARGA
@@ -55,7 +59,7 @@ for sheet_name in omp_sheets:
     if header_row is None:
         continue
 
-    # Headers
+    # Headers (manejo de celdas combinadas)
     metric_row = df.iloc[header_row - 1].ffill()
     proc_row = df.iloc[header_row + 1].ffill()
 
@@ -67,6 +71,7 @@ for sheet_name in omp_sheets:
         metrica = metric_row[col]
         procesadora = proc_row[col]
 
+        # evitar columnas completamente vacías
         if pd.isna(metrica) and pd.isna(procesadora):
             continue
 
@@ -75,6 +80,7 @@ for sheet_name in omp_sheets:
 
         temp = temp.dropna(subset=["fecha_raw"])
 
+        # parse fecha
         temp["fecha"] = pd.to_datetime(
             temp["fecha_raw"], format="%Y/%m", errors="coerce"
         )
@@ -82,6 +88,7 @@ for sheet_name in omp_sheets:
         temp = temp.dropna(subset=["fecha"])
         temp["fecha"] = temp["fecha"].dt.strftime("%d/%m/%Y")
 
+        # metadata
         temp["metrica"] = str(metrica).strip()
         temp["procesadora"] = str(procesadora).strip()
         temp["origen"] = sheet_name
@@ -93,6 +100,9 @@ for sheet_name in omp_sheets:
 # =========================
 # FINAL
 # =========================
+
+if not data_final:
+    raise Exception("No se generaron datos")
 
 df_final = pd.concat(data_final, ignore_index=True)
 
