@@ -5,8 +5,8 @@ permissions:
 
 on:
   schedule:
-    - cron: '0 9 * * 1'
-    - cron: '0 9 * * 3'
+    - cron: '0 9 * * 1'   # lunes
+    - cron: '0 9 * * 3'   # miércoles
   workflow_dispatch:
 
 jobs:
@@ -23,15 +23,17 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
 
       - name: Run pipeline
-        run: python pipeline.py
-
-      - name: Commit results
         run: |
-          git config --global user.name "bot"
-          git config --global user.email "bot@github.com"
-          git add bcp_limpio.csv
-          git commit -m "update data" || echo "no changes"
+          python pipeline.py
+
+      - name: Commit and push CSV files
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add *.csv
+          git commit -m "update data $(date +'%Y-%m-%d')" || echo "no changes"
           git push
