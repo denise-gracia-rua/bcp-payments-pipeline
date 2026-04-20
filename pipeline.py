@@ -2,14 +2,55 @@ import requests
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
+from bs4 import BeautifulSoup
+
+# =========================
+# FUNCION: DETECTAR ÚLTIMO EXCEL
+# =========================
+
+def obtener_ultimo_excel():
+    url = "https://www.bcp.gov.py/web/institucional/anexo-estadistico-de-pagos"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    print("Buscando último archivo en BCP...")
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code != 200:
+        raise Exception("No se pudo acceder a la página del BCP")
+
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    links = soup.find_all("a", href=True)
+
+    excel_links = []
+
+    for link in links:
+        href = link["href"]
+        if ".xlsx" in href and "Bolet" in href:
+            excel_links.append(href)
+
+    if not excel_links:
+        raise Exception("No se encontró archivo Excel")
+
+    ultimo = excel_links[0]
+
+    if not ultimo.startswith("http"):
+        ultimo = "https://www.bcp.gov.py" + ultimo
+
+    print("Excel detectado:", ultimo)
+
+    return ultimo
+
 
 # =========================
 # CONFIG
 # =========================
 
-FILE_URL = "https://www.bcp.gov.py/documents/20117/213063/Bolet%C3%ADn+Estad%C3%ADstico+de+Sistemas+de+Pago_Marzo_2026.xlsx"
+FILE_URL = obtener_ultimo_excel()
 
-# nombre dinámico con fecha
 hoy = datetime.today().strftime("%Y%m%d")
 OUTPUT_FILE = f"bcp_datos_{hoy}.csv"
 
@@ -71,7 +112,6 @@ for sheet_name in omp_sheets:
         metrica = metric_row[col]
         procesadora = proc_row[col]
 
-        # evitar columnas completamente vacías
         if pd.isna(metrica) and pd.isna(procesadora):
             continue
 
@@ -80,7 +120,6 @@ for sheet_name in omp_sheets:
 
         temp = temp.dropna(subset=["fecha_raw"])
 
-        # parse fecha
         temp["fecha"] = pd.to_datetime(
             temp["fecha_raw"], format="%Y/%m", errors="coerce"
         )
@@ -88,7 +127,6 @@ for sheet_name in omp_sheets:
         temp = temp.dropna(subset=["fecha"])
         temp["fecha"] = temp["fecha"].dt.strftime("%d/%m/%Y")
 
-        # metadata
         temp["metrica"] = str(metrica).strip()
         temp["procesadora"] = str(procesadora).strip()
         temp["origen"] = sheet_name
