@@ -5,23 +5,29 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 # =========================
-# FUNCION: DETECTAR ÚLTIMO EXCEL
+# FUNCION: DETECTAR ÚLTIMO EXCEL (ANTI 403)
 # =========================
 
 def obtener_ultimo_excel():
     url = "https://www.bcp.gov.py/web/institucional/anexo-estadistico-de-pagos"
     
     headers = {
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9",
+        "Connection": "keep-alive",
+        "Referer": "https://www.google.com/"
     }
 
     print("Buscando último archivo en BCP...")
-    response = requests.get(url, headers=headers)
     
+    session = requests.Session()
+    response = session.get(url, headers=headers)
+
     print("Status página:", response.status_code)
 
     if response.status_code != 200:
-        raise Exception("No se pudo acceder a la página del BCP")
+        raise Exception(f"No se pudo acceder a la página del BCP - Status {response.status_code}")
 
     soup = BeautifulSoup(response.text, "html.parser")
 
@@ -36,10 +42,7 @@ def obtener_ultimo_excel():
                 href = "https://www.bcp.gov.py" + href
             excel_links.append(href)
 
-    print(f"Cantidad de excels encontrados: {len(excel_links)}")
-
-    for l in excel_links[:5]:
-        print("Ejemplo link:", l)
+    print(f"Excels encontrados: {len(excel_links)}")
 
     if not excel_links:
         raise Exception("No se encontraron archivos Excel")
@@ -68,9 +71,10 @@ OUTPUT_FILE = f"bcp_datos_{hoy}.csv"
 # =========================
 
 session = requests.Session()
+
 headers = {
     "User-Agent": "Mozilla/5.0",
-    "Referer": "https://www.bcp.gov.py/web/institucional/anexo-estadistico-de-pagos"
+    "Referer": "https://www.bcp.gov.py/"
 }
 
 print("Descargando archivo...")
@@ -81,20 +85,13 @@ print("Status descarga:", response.status_code)
 if response.status_code != 200:
     raise Exception("Error al descargar archivo")
 
-if len(response.content) < 10000:
-    raise Exception("Archivo descargado sospechosamente pequeño")
-
 excel_file = BytesIO(response.content)
 
 # =========================
 # LEER EXCEL
 # =========================
 
-try:
-    xls = pd.ExcelFile(excel_file)
-except Exception as e:
-    raise Exception(f"Error leyendo Excel: {e}")
-
+xls = pd.ExcelFile(excel_file)
 omp_sheets = [s for s in xls.sheet_names if s.startswith("OMP")]
 
 print("Hojas encontradas:", omp_sheets)
@@ -158,7 +155,7 @@ for sheet_name in omp_sheets:
 # =========================
 
 if not data_final:
-    raise Exception("No se generaron datos (todas las hojas fallaron)")
+    raise Exception("No se generaron datos")
 
 df_final = pd.concat(data_final, ignore_index=True)
 
