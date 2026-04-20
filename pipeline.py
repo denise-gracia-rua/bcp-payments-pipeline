@@ -5,7 +5,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 # =========================
-# FUNCION: DETECTAR ÚLTIMO EXCEL
+# FUNCION: DETECTAR ÚLTIMO EXCEL (ROBUSTA)
 # =========================
 
 def obtener_ultimo_excel():
@@ -29,16 +29,18 @@ def obtener_ultimo_excel():
 
     for link in links:
         href = link["href"]
-        if ".xlsx" in href and "Bolet" in href:
+        if ".xlsx" in href:
+            if not href.startswith("http"):
+                href = "https://www.bcp.gov.py" + href
             excel_links.append(href)
 
     if not excel_links:
-        raise Exception("No se encontró archivo Excel")
+        raise Exception("No se encontraron archivos Excel")
+
+    # 🔥 tomar el más largo (suele ser el más reciente con token)
+    excel_links = sorted(excel_links, key=len, reverse=True)
 
     ultimo = excel_links[0]
-
-    if not ultimo.startswith("http"):
-        ultimo = "https://www.bcp.gov.py" + ultimo
 
     print("Excel detectado:", ultimo)
 
@@ -90,7 +92,6 @@ for sheet_name in omp_sheets:
     
     df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
 
-    # Buscar fila "Año Mes"
     header_row = None
     for i in range(len(df)):
         if df.iloc[i].astype(str).str.contains("Año Mes", case=False, na=False).any():
@@ -100,11 +101,9 @@ for sheet_name in omp_sheets:
     if header_row is None:
         continue
 
-    # Headers (manejo de celdas combinadas)
     metric_row = df.iloc[header_row - 1].ffill()
     proc_row = df.iloc[header_row + 1].ffill()
 
-    # Data
     df_data = df.iloc[header_row + 2:].copy()
 
     for col in range(2, df.shape[1]):
