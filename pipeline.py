@@ -148,6 +148,14 @@ df_final = pd.concat(data_final, ignore_index=True)
 print("Filas:", len(df_final))
 
 # =========================
+# LIMPIEZA FINAL (CRÍTICO)
+# =========================
+
+df_final = df_final.replace([float("inf"), float("-inf")], None)
+df_final = df_final.where(pd.notnull(df_final), None)
+df_final = df_final.astype(object)
+
+# =========================
 # GOOGLE SHEETS
 # =========================
 
