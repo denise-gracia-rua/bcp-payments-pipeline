@@ -8,186 +8,102 @@ import os
 
 print("=== INICIO PIPELINE ===")
 
-# =========================
-# CONFIG
-# =========================
-
-MESES = [
-    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
-]
-
-BASE_URL = "https://www.bcp.gov.py/documents/20117/213063/Bolet%C3%ADn+Estad%C3%ADstico+de+Sistemas+de+Pago_{mes}_{anio}.xlsx"
-
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1FJnqyffjqsEg_3Qt-ww6hqJYMd6eLXgG1S_FHhbBqmk/edit#gid=0"
-
-INDICADORES_VALIDOS = [
-    "Compras en POS con Tarjeta de Crédito",
-    "Compras en Internet con Tarjeta de Crédito",
-    "Compras en POS con Tarjeta de Débito",
-    "Compras en Internet con Tarjeta de Débito",
-    "Extracciones en ATM",
-    "Compras en POS con Tarjetas Prepagas",
-    "Compras en Internet con Tarjetas Prepagas",
-    "Extracciones en ATM con Tarjetas Prepagas",
-    "Cantidad de ATM por Operadora",
-    "Cantidad de Comercios Adheridos por Operadora",
-    "Cantidad de POS por Operadora",
-    "Total QR"
-]
+# ... (Configuración de MESES, BASE_URL y SPREADSHEET_URL igual a tu código)
 
 # =========================
-# BUSCAR ARCHIVO
-# =========================
-
-def obtener_ultimo_excel():
-    session = requests.Session()
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    hoy = datetime.today()
-    anio = hoy.year
-
-    for year in [anio, anio - 1]:
-        for mes in reversed(MESES):
-            url = BASE_URL.format(mes=mes, anio=year)
-
-            try:
-                r = session.get(url, headers=headers)
-                if r.status_code == 200 and len(r.content) > 10000:
-                    print(f"Archivo encontrado: {mes} {year}")
-                    return url
-            except:
-                continue
-
-    raise Exception("No se encontró archivo")
-
-# =========================
-# DESCARGA
-# =========================
-
-url = obtener_ultimo_excel()
-file = requests.get(url)
-
-if file.status_code != 200:
-    raise Exception("Error descargando archivo")
-
-excel = BytesIO(file.content)
-xls = pd.ExcelFile(excel)
-
-# =========================
-# PROCESAMIENTO
+# PROCESAMIENTO CORREGIDO
 # =========================
 
 data_final = []
 
 for sheet in xls.sheet_names:
-
     if not sheet.startswith("OMP"):
         continue
 
     print(f"Procesando {sheet}")
-
+    # Leemos la hoja completa sin cabeceras para manejar la estructura manualmente
     df = pd.read_excel(xls, sheet_name=sheet, header=None)
 
-    # Buscar fila Año Mes
-    header_row = None
+    # 1. Localizar la fila "Año Mes" que es nuestra ancla
+    header_idx = None
     for i in range(len(df)):
         if df.iloc[i].astype(str).str.contains("Año Mes", na=False).any():
-            header_row = i
+            header_idx = i
             break
 
-    if header_row is None:
+    if header_idx is None:
+        print(f"No se encontró ancla en {sheet}, saltando...")
         continue
 
-    # Fechas
-    fechas = df.iloc[header_row + 2:, 1]
-    fechas = pd.to_datetime(fechas, format="%Y/%m", errors="coerce")
+    # 2. Extraer Filas de Metadatos (ajustado a la estructura real del BCP)
+    # Fila de Indicadores (ej: Cantidad de ATM...) suele estar 1 fila ARRIBA de Año Mes
+    indicadores_row = df.iloc[header_idx - 1].copy()
+    indicadores_row.iloc[2:] = indicadores_row.iloc[2:].ffill() # Completar celdas combinadas
 
-    # 🔥 FILA INDICADOR
-    metric_row = df.iloc[header_row - 1]
+    # Fila de Operadoras (ej: BANCARD, UPAY...) es la fila donde está "Año Mes"
+    operadoras_row = df.iloc[header_idx].copy()
 
-    # 🔥 FILA OPERADORAS (FIX CLAVE)
-    operadoras_row = df.iloc[header_row + 1].copy()
-    operadoras_row = operadoras_row.ffill()  # ← ESTE ES EL FIX
-
+    # 3. Extraer Fechas y Datos
+    # Las fechas están en la columna index 1, desde 1 fila abajo del header
+    fechas_raw = df.iloc[header_idx + 1:, 1]
+   
+    # 4. Iterar por columnas de datos (desde la columna 2 en adelante)
     for col in range(2, df.shape[1]):
+        indicador = str(indicadores_row[col]).strip()
+        operadora = str(operadoras_row[col]).strip()
 
-        indicador = metric_row[col]
-        operadora = operadoras_row[col]
-
-        if pd.isna(indicador):
+        # Limpieza de nombres
+        if indicador == "nan" or "Indice" in indicador:
             continue
+       
+        # Si la operadora es "nan", suele ser porque el indicador no tiene desglose
+        # En ese caso usamos "Total/General" o lo que indique la fila de abajo
+        if operadora == "nan":
+            # Intentamos ver si hay un detalle de "Cantidad/Monto" en la fila siguiente
+            detalle_debajo = str(df.iloc[header_idx + 1, col]).strip()
+            operadora = detalle_debajo if detalle_debajo != "nan" else "Total/General"
 
-        indicador = str(indicador).strip()
+        # Extraer valores de la columna actual
+        valores = df.iloc[header_idx + 1:, col]
 
-        if not any(k in indicador for k in INDICADORES_VALIDOS):
-            continue
-
-        if pd.isna(operadora):
-            continue
-
-        operadora = str(operadora).strip()
-
-        # evitar columnas basura
-        if operadora.lower() in ["cantidad", "monto"]:
-            continue
-
-        valores = df.iloc[header_row + 2:, col]
-
+        # Crear DataFrame temporal para esta columna
         temp = pd.DataFrame({
-            "fecha": fechas,
+            "fecha": fechas_raw,
             "indicador": indicador,
             "operadora": operadora,
             "valor": valores,
             "origen_valor": sheet
         })
 
-        temp = temp.dropna(subset=["fecha", "valor"])
+        # Limpieza de datos dentro de la columna
+        temp = temp.dropna(subset=["valor"])
+        temp = temp[temp["valor"].astype(str).str.strip() != ""]
+        temp = temp[temp["valor"].astype(str).str.strip() != "#REF!"]
+       
+        # Formatear fecha dd/mm/aaaa
+        # El BCP usa YYYY/MM, lo convertimos:
+        def transformar_fecha(x):
+            try:
+                partes = str(x).split('/')
+                return f"01/{partes[1]}/{partes[0]}"
+            except: return None
 
-        temp["fecha"] = temp["fecha"].dt.strftime("%d/%m/%Y")
+        temp["fecha"] = temp["fecha"].apply(transformar_fecha)
+        temp = temp.dropna(subset=["fecha"])
 
         data_final.append(temp)
 
 # =========================
-# CONCAT
+# CONSOLIDACIÓN Y ENVÍO
 # =========================
 
-df_final = pd.concat(data_final, ignore_index=True)
-
-# =========================
-# LIMPIEZA
-# =========================
-
-df_final = df_final.replace([float("inf"), float("-inf")], None)
-df_final = df_final.where(pd.notnull(df_final), None)
-
-print("Filas finales:", len(df_final))
-
-# =========================
-# GOOGLE SHEETS
-# =========================
-
-scope = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
-
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-client = gspread.authorize(creds)
-
-spreadsheet = client.open_by_url(SPREADSHEET_URL)
-sheet = spreadsheet.sheet1
-
-sheet.clear()
-sheet.update([df_final.columns.tolist()] + df_final.values.tolist())
-
-print("✅ Google Sheets actualizado")
-
-# =========================
-# BACKUP CSV
-# =========================
-
-hoy = datetime.today().strftime("%Y%m%d")
-df_final.to_csv(f"bcp_datos_{hoy}.csv", index=False)
-
-print("=== FIN PIPELINE ===")
+if data_final:
+    df_final = pd.concat(data_final, ignore_index=True)
+   
+    # Limpieza final de strings
+    df_final["operadora"] = df_final["operadora"].replace("nan", "Total/General")
+   
+    # ... (Resto de tu código de Google Sheets y Backup igual)
+    print(f"Éxito: {len(df_final)} filas procesadas.")
+else:
+    print("No se recolectaron datos.")
