@@ -4,7 +4,6 @@ from io import BytesIO
 from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 import os
 
 print("=== INICIO PIPELINE ===")
@@ -23,11 +22,23 @@ BASE_URL = "https://www.bcp.gov.py/documents/20117/213063/Bolet%C3%ADn+Estad%C3%
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1FJnqyffjqsEg_3Qt-ww6hqJYMd6eLXgG1S_FHhbBqmk/edit#gid=0"
 
 # =========================
-# VALIDAR CREDENTIALS
+# INDICADORES QUE SÍ USAMOS
 # =========================
 
-if not os.path.exists("credentials.json"):
-    raise Exception("❌ credentials.json NO EXISTE")
+INDICADORES_VALIDOS = [
+    "Compras en POS con Tarjeta de Crédito",
+    "Compras en Internet con Tarjeta de Crédito",
+    "Compras en POS con Tarjeta de Débito",
+    "Compras en Internet con Tarjeta de Débito",
+    "Extracciones en ATM",
+    "Compras en POS con Tarjetas Prepagas",
+    "Compras en Internet con Tarjetas Prepagas",
+    "Extracciones en ATM con Tarjetas Prepagas",
+    "Cantidad de ATM por Operadora",
+    "Cantidad de Comercios Adheridos por Operadora",
+    "Cantidad de POS por Operadora",
+    "Total QR"
+]
 
 # =========================
 # BUSCAR ARCHIVO
@@ -45,99 +56,100 @@ def obtener_ultimo_excel():
             url = BASE_URL.format(mes=mes, anio=year)
 
             try:
-                response = session.get(url, headers=headers)
-
-                if response.status_code == 200 and len(response.content) > 10000:
+                r = session.get(url, headers=headers)
+                if r.status_code == 200 and len(r.content) > 10000:
                     print(f"Archivo encontrado: {mes} {year}")
                     return url
-
             except:
                 continue
 
-    raise Exception("❌ No se encontró archivo")
+    raise Exception("No se encontró archivo")
 
 # =========================
 # DESCARGA
 # =========================
 
-FILE_URL = obtener_ultimo_excel()
+url = obtener_ultimo_excel()
+file = requests.get(url)
 
-response = requests.get(FILE_URL)
-
-if response.status_code != 200:
-    raise Exception("❌ Error descarga")
-
-excel_file = BytesIO(response.content)
+excel = BytesIO(file.content)
+xls = pd.ExcelFile(excel)
 
 # =========================
 # PROCESAMIENTO
 # =========================
 
-xls = pd.ExcelFile(excel_file)
-omp_sheets = [s for s in xls.sheet_names if s.startswith("OMP")]
-
 data_final = []
 
-for sheet_name in omp_sheets:
-    print(f"Procesando {sheet_name}")
+for sheet in xls.sheet_names:
+    if not sheet.startswith("OMP"):
+        continue
 
-    df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+    print(f"Procesando {sheet}")
 
+    df = pd.read_excel(xls, sheet_name=sheet, header=None)
+
+    # Buscar fila Año Mes
     header_row = None
     for i in range(len(df)):
-        if df.iloc[i].astype(str).str.contains("Año Mes", case=False, na=False).any():
+        if df.iloc[i].astype(str).str.contains("Año Mes", na=False).any():
             header_row = i
             break
 
     if header_row is None:
         continue
 
-    metric_row = df.iloc[header_row - 1]
-    proc_row = df.iloc[header_row + 1]
+    fechas = df.iloc[header_row + 2:, 1]
+    fechas = pd.to_datetime(fechas, format="%Y/%m", errors="coerce")
 
-    # ✅ FIX
-    proc_row = proc_row.ffill()
+    for col in range(2, df.shape[1]):
 
-    df_data = df.iloc[header_row + 2:].copy()
+        # detectar indicador (busca hacia arriba)
+        indicador = None
+        for i in range(header_row - 1, 0, -1):
+            val = str(df.iloc[i, col])
+            if any(k in val for k in INDICADORES_VALIDOS):
+                indicador = val
+                break
 
-    for col in range(len(df.columns)):
-
-        metrica = metric_row[col]
-        procesadora = proc_row[col]
-
-        if pd.isna(metrica):
+        if indicador is None:
             continue
 
-        if isinstance(procesadora, str) and "Unnamed" in procesadora:
+        # detectar operadora
+        operadora = df.iloc[header_row + 1, col]
+        if pd.isna(operadora):
             continue
 
-        temp = df_data.iloc[:, [1, col]].copy()
-        temp.columns = ["fecha_raw", "valor"]
+        valores = df.iloc[header_row + 2:, col]
 
-        temp = temp.dropna(subset=["fecha_raw"])
+        temp = pd.DataFrame({
+            "fecha": fechas,
+            "indicador": indicador,
+            "operadora": operadora,
+            "valor": valores,
+            "origen_valor": sheet
+        })
 
-        temp["fecha"] = pd.to_datetime(temp["fecha_raw"], format="%Y/%m", errors="coerce")
-        temp = temp.dropna(subset=["fecha"])
+        temp = temp.dropna(subset=["fecha", "valor"])
+
         temp["fecha"] = temp["fecha"].dt.strftime("%d/%m/%Y")
 
-        temp["metrica"] = str(metrica).strip()
-        temp["procesadora"] = str(procesadora).strip()
-        temp["origen"] = sheet_name
-
-        temp = temp[["fecha", "metrica", "procesadora", "valor", "origen"]]
-
         data_final.append(temp)
+
+# =========================
+# CONCAT
+# =========================
 
 df_final = pd.concat(data_final, ignore_index=True)
 
 # =========================
-# LIMPIEZA FINAL
+# LIMPIEZA
 # =========================
 
 df_final = df_final.replace([float("inf"), float("-inf")], None)
 df_final = df_final.where(pd.notnull(df_final), None)
 
-print("Filas:", len(df_final))
+print("Filas finales:", len(df_final))
 
 # =========================
 # GOOGLE SHEETS
@@ -151,20 +163,18 @@ scope = [
 creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
 
-spreadsheet = client.open_by_url(SPREADSHEET_URL)
-sheet = spreadsheet.sheet1
+sheet = client.open_by_url(SPREADSHEET_URL).sheet1
 
 sheet.clear()
+sheet.update([df_final.columns.tolist()] + df_final.values.tolist())
 
-sheet.update([df_final.columns.values.tolist()] + df_final.values.tolist())
-
-print("✅ DATA OK")
+print("✅ Google Sheets actualizado")
 
 # =========================
 # BACKUP
 # =========================
 
-hoy_str = datetime.today().strftime("%Y%m%d")
-df_final.to_csv(f"bcp_datos_{hoy_str}.csv", index=False)
+hoy = datetime.today().strftime("%Y%m%d")
+df_final.to_csv(f"bcp_datos_{hoy}.csv", index=False)
 
 print("=== FIN PIPELINE ===")
