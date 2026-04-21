@@ -92,12 +92,11 @@ for sheet_name in omp_sheets:
     if header_row is None:
         continue
 
-    # 🔥 FILAS CLAVE
     metric_row = df.iloc[header_row - 1]
     proc_row = df.iloc[header_row + 1]
 
-    # 🔥 LIMPIEZA DE PROCESADORAS
-    proc_row = proc_row.fillna(method="ffill")
+    # ✅ FIX
+    proc_row = proc_row.ffill()
 
     df_data = df.iloc[header_row + 2:].copy()
 
@@ -106,7 +105,6 @@ for sheet_name in omp_sheets:
         metrica = metric_row[col]
         procesadora = proc_row[col]
 
-        # 🔥 FILTRAR COLUMNAS BASURA
         if pd.isna(metrica):
             continue
 
@@ -129,10 +127,6 @@ for sheet_name in omp_sheets:
         temp = temp[["fecha", "metrica", "procesadora", "valor", "origen"]]
 
         data_final.append(temp)
-
-# =========================
-# CONCAT
-# =========================
 
 df_final = pd.concat(data_final, ignore_index=True)
 
