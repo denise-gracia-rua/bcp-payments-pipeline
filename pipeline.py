@@ -21,10 +21,6 @@ BASE_URL = "https://www.bcp.gov.py/documents/20117/213063/Bolet%C3%ADn+Estad%C3%
 
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1FJnqyffjqsEg_3Qt-ww6hqJYMd6eLXgG1S_FHhbBqmk/edit#gid=0"
 
-# =========================
-# INDICADORES QUE SÍ USAMOS
-# =========================
-
 INDICADORES_VALIDOS = [
     "Compras en POS con Tarjeta de Crédito",
     "Compras en Internet con Tarjeta de Crédito",
@@ -72,6 +68,9 @@ def obtener_ultimo_excel():
 url = obtener_ultimo_excel()
 file = requests.get(url)
 
+if file.status_code != 200:
+    raise Exception("Error descargando archivo")
+
 excel = BytesIO(file.content)
 xls = pd.ExcelFile(excel)
 
@@ -82,6 +81,7 @@ xls = pd.ExcelFile(excel)
 data_final = []
 
 for sheet in xls.sheet_names:
+
     if not sheet.startswith("OMP"):
         continue
 
@@ -99,25 +99,37 @@ for sheet in xls.sheet_names:
     if header_row is None:
         continue
 
+    # Fechas
     fechas = df.iloc[header_row + 2:, 1]
     fechas = pd.to_datetime(fechas, format="%Y/%m", errors="coerce")
 
+    # 🔥 FILA INDICADOR
+    metric_row = df.iloc[header_row - 1]
+
+    # 🔥 FILA OPERADORAS (FIX CLAVE)
+    operadoras_row = df.iloc[header_row + 1].copy()
+    operadoras_row = operadoras_row.ffill()  # ← ESTE ES EL FIX
+
     for col in range(2, df.shape[1]):
 
-        # detectar indicador (busca hacia arriba)
-        indicador = None
-        for i in range(header_row - 1, 0, -1):
-            val = str(df.iloc[i, col])
-            if any(k in val for k in INDICADORES_VALIDOS):
-                indicador = val
-                break
+        indicador = metric_row[col]
+        operadora = operadoras_row[col]
 
-        if indicador is None:
+        if pd.isna(indicador):
             continue
 
-        # detectar operadora
-        operadora = df.iloc[header_row + 1, col]
+        indicador = str(indicador).strip()
+
+        if not any(k in indicador for k in INDICADORES_VALIDOS):
+            continue
+
         if pd.isna(operadora):
+            continue
+
+        operadora = str(operadora).strip()
+
+        # evitar columnas basura
+        if operadora.lower() in ["cantidad", "monto"]:
             continue
 
         valores = df.iloc[header_row + 2:, col]
@@ -163,7 +175,8 @@ scope = [
 creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
 
-sheet = client.open_by_url(SPREADSHEET_URL).sheet1
+spreadsheet = client.open_by_url(SPREADSHEET_URL)
+sheet = spreadsheet.sheet1
 
 sheet.clear()
 sheet.update([df_final.columns.tolist()] + df_final.values.tolist())
@@ -171,7 +184,7 @@ sheet.update([df_final.columns.tolist()] + df_final.values.tolist())
 print("✅ Google Sheets actualizado")
 
 # =========================
-# BACKUP
+# BACKUP CSV
 # =========================
 
 hoy = datetime.today().strftime("%Y%m%d")
